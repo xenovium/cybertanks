@@ -724,5 +724,3 @@ function createPlayer()
 	
 	return player;
 }
-	}
-}
