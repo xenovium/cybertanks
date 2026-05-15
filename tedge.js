@@ -36,8 +36,6 @@ function run()
 	document.onkeydown = onKeyDown;
 	document.onkeyup = onKeyUp;
 	
-	// init game stuffs
-	gameInit();
 }
 
 //////////////////////////////////////////////////////
