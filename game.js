@@ -2,6 +2,12 @@
 // Started August 2011
 // in Aizu, Fukushima, Japan
 ////////////////////////////
+
+var user_id = 99; // Set a manual player ID
+var connected = true; // Force-connect the engine
+var socket = { 
+	emit: function(e, d) { console.log("Offline out:", e); }, 
+	on: function(e, c) { console.log("Offline in:", e); } };
 var COLORS = [
 	[1.0, 1.0, 1.0],
 	[0.0, 1.0, 0.0],
@@ -707,7 +713,6 @@ function createPlayer()
 	var tankSpawn = player.spawn;
 	player.spawn = function ()
 	{
-		if (user_id)
 			tankSpawn();
 	}
 	
@@ -724,3 +729,172 @@ function createPlayer()
 	
 	return player;
 }
+
+//////////////////////////////////////////////////////
+// NET CODE
+//////////////////////////////////////////////////////
+
+var netPlayers = {};
+
+function createNetPlayer(id)
+{
+	var player = createTank();
+	player.color = COLORS[id % COLORS.length];
+
+	// public properties
+	var tick = 0;
+	var keys;
+	
+	// methods
+	player.netUpdate = function(data)
+	{
+		tick = 0;
+		player.pos = data['pos'];
+		player.vel = data['vel'];
+		player.accl = data['accl'];
+		player.rot = data['rot'];
+		player.rotv = data['rotv'];
+		if (data['isPlane'])
+		{
+			if (!player.isPlane)
+				makePlane(player);
+			player.isPlane = data['isPlane'];
+			player.roll = data['roll'];
+			player.pitch = data['pitch'];
+		}
+		keys = data['keys'];
+	}
+	
+	// override update()
+	var tankUpdate = player.update;
+	player.update = function (dt)
+	{
+		player.health = 5;
+	
+		if (keys && keys.left)
+			player.left();
+		if (keys && keys.right)
+			player.right();
+		if (keys && keys.up)
+			player.forward();
+		if (keys && keys.down)
+			player.reverse();
+	
+		tankUpdate(dt);
+	
+		tick += dt;
+		if (tick > 10.0)
+		{
+            removeEntity(player);
+			if (netPlayers[id])
+				delete netPlayers[id];
+		}
+	}
+	
+	// override spawn()
+	player.spwan = function () {};
+	
+	return player;
+}
+
+function netMessage(resp)
+{
+	console.log(resp);
+	if (resp['event'] == 'hi')
+	{
+		user_id = resp['id'];
+		connected = true;
+		tanks[0].color = COLORS[user_id % COLORS.length];
+		
+		/*socket.json.send({
+				event: 'hello',
+				id: user_id
+		});*/
+	}
+	else
+	{
+		var user = resp['id'];
+		if (resp['event'] == 'pos' || resp['event'] == 'shoot')
+		{
+			// find the netplayer or create them		
+			if (!netPlayers[user])
+			{
+				var player = createNetPlayer(user);
+				entities.push(player);
+				netPlayers[user] = player;
+			}
+		
+			// update physics
+			netPlayers[user].netUpdate(resp);
+        
+			// pew pew pew
+			if (resp['event'] == 'shoot')
+			{
+				netPlayers[user].shoot(resp['side']);
+			}
+		}
+		else if (resp['event'] == 'die')
+		{
+			if (netPlayers[user])
+				netPlayers[user].die();
+		}
+		else
+		{
+			// unknown event
+			alert("unknown event: " + resp['event']);
+		}
+	}
+}
+
+function netConnect()
+{
+	console.log("⚓ [Offline Mode] Intercepted game logic netConnect check.");
+	socket = {
+		emit: function(event, data) { /* Safely swallow client movement packets */ },
+		on: function(event, callback) { /* Safely swallow network listeners */ }
+	};
+	connected = true
+	user_id = 99;
+}
+
+//////////////////////////////////////////////////////
+// ~THAT'S IT~
+//////////////////////////////////////////////////////
+
+// preload for performance
+function loadResources()
+{
+	loadMesh(TANK_MESH);
+	loadMesh(BOX_MESH);
+	loadMesh(BULLET_MESH);
+	loadTexture('thick.png');
+	loadTexture('thin.png');
+}
+
+function gameInit()
+{
+    loadResources();
+
+    var level = createLevel();
+    var player = createPlayer();
+
+    gCamera = createTrackingCamera(player);
+    entities = [level, player, gCamera];
+
+    var x = 7; var y = 17; var offs = LEVEL_SIZE*5;
+    for (var i = 1; i <= NUM_PICKUPS; i++)
+    {
+        x = (3*x + 23*i) % (LEVEL_SIZE-1);
+        y = (7*y + 17*i) % (LEVEL_SIZE-1);
+        var pickup = createPickup([x*10 - offs + 5, 0, y*10 - offs + 5], PICKUP_TYPE[i%PICKUP_TYPE.length]);
+        entities.push(pickup);
+    }
+
+    connected = true;
+    user_id = 99;
+
+    startGame();
+
+    netMessage({event: 'hi', id: 99});
+}
+
